@@ -1,0 +1,57 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %} Sistema de reservas - Tattoo Studio {% endblock %}</title>
+
+    <!--Bootstrap CSS local-->
+    <link rel="stylesheet" href="{% static 'reservas/css/bootstrap.min.css' %}">
+
+    <!--Estilos personalizados opcionales-->
+    <link rel="stylesheet" href="{% static 'reservas/css/styles.css' %}">
+
+</head>
+
+<body>
+    <!--Navbar clásico-->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+        <div class="container">
+            <a class="navbar-brand" href="{% url 'reservas:index' %}">🎨 Tattoo Studio</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">Reservas</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">Artistas</a>
+                    </li>
+
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">Clientes</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+    </nav>
+
+    <!--Contenido principal-->
+    <main class="container mt-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!--Bootstrap JS local-->
+
+    <script src="{% static 'reservas/js/bootstrap.bundle.min.js' %}"></script>
+
+
+    {% block extra_js %} {% endblock %}
+</body>
+
+</html>
