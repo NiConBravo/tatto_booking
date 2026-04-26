@@ -96,3 +96,87 @@ class TarifaArtista(models.Model):
                 raise ValidationError(
                     "La fecha de fin debe ser posterior a la fecha de inicio"
                 )
+class DiaSemana(models.IntegerChoices):
+    """
+    Enum para días de la semana.
+        0 = Lunes, 6 = Domingo (estándar ISO)
+    """
+    LUNES = 0, 'Lunes'
+    MARTES = 1, 'Martes'
+    MIERCOLES = 2, 'Miércoles'
+    JUEVES = 3, 'Jueves'
+    VIERNES = 4, 'Viernes'
+    SABADO = 5, 'Sábado'
+    DOMINGO = 6, 'Domingo'
+
+class DisponibilidadArtista(models.Model):
+    """
+    Define los horarios de trabajo de cada artista por día de semana.
+    Ejemplo: Carlos trabaja Lunes-Viernes de 10:00 a 18:00.
+    """
+    Artista = models.ForeignKey(
+        Artista,
+        ond_delete = models.CASCADE,
+        related_name= 'disponibilidades'
+    )
+    dia_semana = models.IntegerField(
+        choices = DiaSemana.choices,
+        help_text= "Día de la semana (0=Lunes, 6=Domingo)"
+    )
+
+    class Meta:
+        verbose_name = "Disponibilidad de Artista"
+        verbose_name_plural = "Disponibilidades de Artistas"
+        ordering = ['artista', 'dia_semana', 'hora_inicio']
+    
+    def __str__(self):
+        return f"{self.artista.nombre} - {self.get_dia_semana_display()} {self.hora_inicio}-{self.hora_fin}"
+
+    def clean(self):
+        """
+        Validaciones:
+        1. hora_fin debe ser posterior a hora_inicio
+        2. No puede solapar con otra disponibilidad del mismo artista el mismo día
+        """
+        #Validación 1
+        if self.hora_fin <= self.hora_inicio:
+            raise ValidationError("La hora de fin debe ser posterior a la de inicio")
+        
+        # Validación 2: Detectar solapamiento
+        overlapping = DisponibilidadArtista.objects.filter(
+            artista= self.artista,
+            dia_semana = self.dia_semana,
+            activo = True
+        ).exclude(pk = self.pk) # Excluir el registro actual si es edición
+
+        for disp in overlapping:
+            # Solapan si: (nueva_inicio < existente_fin) AND (nueva_fin > existente_inicio)
+            if self.hora_inicio < disp.hora_fin and self.hora_fin > disp.hora_inicio:
+                raise ValidationError(
+                    f"Este horario solapa con {disp.hora_inicio}-{disp.hora_fin}"
+                )
+class Cliente(models.Model):
+    nombre = models.Charfield(max_lenght = 100)
+    email = models.EmailField(unique= True)
+    telefono = models.Charfield(max_lenght = 15, blank = True, null = True)
+    fecha_nac = models.DateField(verbose_name= "Fecha de nacimiento")
+    creado_en = models.DateTimeField(auto_now_add = True)
+
+    class Meta:
+        verbose_name = "Cliente"
+        verbose_name_plural = "Clientes"
+        ordering = ['-creado_en']
+    
+    def __str__(self):
+        return f"{self.nombre} ({self.email})"
+
+    @property
+    def edad(self):
+        from datetime import date
+        today = date.today()
+        return toda.ear - self.fecha_nac.year - (
+            (today.month, today.day) < (self.fecha_nac.month, self.fecha_nac.day)
+        )
+
+class Reserva(models.Model):
+    
