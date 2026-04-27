@@ -156,9 +156,9 @@ class DisponibilidadArtista(models.Model):
                     f"Este horario solapa con {disp.hora_inicio}-{disp.hora_fin}"
                 )
 class Cliente(models.Model):
-    nombre = models.Charfield(max_lenght = 100)
+    nombre = models.Charfield(max_length = 100)
     email = models.EmailField(unique= True)
-    telefono = models.Charfield(max_lenght = 15, blank = True, null = True)
+    telefono = models.Charfield(max_length = 15, blank = True, null = True)
     fecha_nac = models.DateField(verbose_name= "Fecha de nacimiento")
     creado_en = models.DateTimeField(auto_now_add = True)
 
@@ -174,9 +174,195 @@ class Cliente(models.Model):
     def edad(self):
         from datetime import date
         today = date.today()
-        return toda.ear - self.fecha_nac.year - (
+        return today.year - self.fecha_nac.year - (
             (today.month, today.day) < (self.fecha_nac.month, self.fecha_nac.day)
         )
 
 class Reserva(models.Model):
-    
+    """
+    Representa una cita agendada.
+        Vincula cliente, artista y TARIFA APLICADA para trazabilidad.
+    """
+    PENDIENTE = 'PENDIENTE'
+    CONFIRMADA = 'CONFIRMADA'
+    COMPLETADA = 'COMPLETADA'
+    CANCELADA = 'CANCELADA'
+
+    ESTADO_CHOICES = [
+        (PENDIENTE, 'Pendiente'),
+        (CONFIRMADA, 'Confirmada'),
+        (COMPLETADA, 'Completada'),
+        (CANCELADA, 'Cancelada'),
+    ]
+
+    # Relaciones
+    cliente = models.ForeignKey(
+        Cliente,
+        on_delete= models.PROTECT,
+        related_name='reservas'
+    )
+    artista = models.ForeignKey(
+        Artista,
+        on_delete= models.PROTECT,
+        related_name= 'reservas'
+    )
+    # Tipo de trabajo (debe coincidir con la tarifa aplicada)
+    tipo_trabajo = models.CharField(
+        max_length = 3,
+        choices = TipoTrabajo.choices
+    )
+
+    # ¡CLAVE! Guarda QUÉ tarifa se usó para calcular el precio
+        # Si la tarifa cambia después, esta reserva conserva el precio original
+    tarifa_aplicada = models.ForeignKey(
+        TarifaArtista,
+        on_delete= models.Protect, # NO eliminar tarifas usadas en reservas
+        null = True, # Permitir NULL temporalmente al crear
+        blank = True,
+        related_name = 'reservas'
+    )
+
+    # FECHA Y HORA
+    fecha = models.DateField()
+    hora_inicio = models.TimeField()
+    duracion_horas= models.DecimalField(max_digits=3, decimal_places=1)
+
+    #Descripción
+    descripcion = models.TextField(blank=True)
+
+    # PRECIO FINAL calculado
+    precio_final = models.DecimalField(
+        max_digits= 10,
+        decimal_places = 2,
+        help_text = 'Precio total calculado según tarifa aplicada'
+    )
+
+    #Estado
+    estado = models.CharField(
+        max_length= 20,
+        choices = ESTADO_CHOICES,
+        default = PENDIENTE
+    )
+
+    #TIMESTAMPS
+
+    creada_en = models.DateTimeField(auto_now_add=True)
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Reserva"
+        verbose_name_plural = "Reservas"
+        ordering = ['fecha', 'hora_inicio']
+        indexes = [
+            models.Index(fields=['fecha', 'artista']),
+            models.Index(fields=['estado']),
+        ]
+    def __str__(self):
+        """
+            Validaciones complejas:
+            1. Cliente debe ser mayor de 18
+            2. Artista debe estar disponible ese día y hora
+            3. No debe solapar con otra reserva del mismo artista
+            4. tipo_trabajo debe coincidir con tarifa_aplicada
+        """
+        #Validación 1: Edad
+        if self.cliente and self.cliente.edad < 18:
+            raise ValidationError("El cliente debe ser mayor de 18 años")
+        #Validación 2: Disponibilidad del artista
+        if self.fecha and self.hora_inicio and self.artista:
+            dia_semana = self.fecha.weekday() #0= Lunes, 6= Domingo
+            disponibilidades = DisponibilidadArtista.objects.filter(
+                artista=self.artista,
+                dia_semana=dia_semana,
+                activo=True
+            )
+            #Calcular hora_fin de la reserva
+            from datetime import datetime, timedelta
+            hora_fin_reserva = (
+                datetime.combine(self.fecha, self.hora_inicio) + 
+                timedelta(hours=float(self.duracion_horas))
+            ).time()
+
+            #Verificar que esté dentro de alguna disponibilidad
+            dentro_de_horario = False
+            for disp in disponibilidades:
+                if disp.hora_inicio <= self.hora_inicio and disp.hora_fin >= hora_fin_reserva:
+                    dentro_de_horario= True
+                    break
+            if not dentro_de_horario:
+                raise ValidationError(
+                    f"{self.artista.nombre} no está disponible en este horario"
+                )
+        #Validación 3: No solapar con otras reservas
+        if self.fecha and self.hora_inicio and self.artista:
+            from datetime import datetime, timedelta
+
+            hora_fin = (
+                datetime.combine(self.fecha, self.hora_inicio) +
+                timedelta(hours=float(self.duracion_horas))
+            ).time()
+
+            # Buscar reservas del mismo artista el mismo día
+            reservas_existentes = Reserva.objects.filter(
+                artista=self.artista,
+                fecha=self.artista,
+                estado__in=[Reserva.PENDIENTE, Reserva.CONFIRMADA]
+            ).exclude(pk=self.pk)
+
+            for reserva in reservas_existentes:
+                # Calcular hora_fin de la reserva existente
+                hora_fin_existente = (
+                    datetime.combine(reserva.fecha, reserva.hora_inicio) + 
+                    timedelta(hours=float(reserva.duracion_horas))
+                ).time()
+                #Detectar solapamiento
+                if self.hora_inicio < hora_fin_existente and hora_fin > reserva.hora_inicio:
+                    raise ValidationError(f"El artista ya tiene una reserva de {reserva.hora_inicio} a {hora_fin_existente}")
+        #Validación 4: Coherencia tarifa-tipo
+        if self.artista_aplicada and self.tipo_trabajo:
+            if self.tarifa_aplicada.tipo_trabajo != self.tipo_trabajo:
+                raise ValidationError(
+                    "El tipo de trabajo no coincide con la tarifa aplicada"
+                )
+    def calcular_precio (self):
+        """
+            Calcula el precio final según la tarifa aplicada.
+            Usa precio_base + (precio_hora * duracion) si aplica.
+        """
+        if not self.tarifa_aplicada:
+            return 0
+        precio = self.artista_aplica.precio_base
+        
+        if self.tarifa_aplicada.precio_hora:
+            precio += self.tarifa_aplicada.precio_hora * float(self.duracion_horas)
+        return precio
+    def save(self, *args, **kwargs):
+        """
+            Override de save para:
+            1. Buscar la tarifa vigente si no se especificó
+            2. Calcular precio_final automáticamente
+            3. Validar todo antes de guardar
+        """
+        # Si no ha tarifa asignada, buscar la vigente
+        if not self.tarifa_aplicada and self.artista and self.tipo_trabajo and self.fecha:
+            tarifa_vigente = TarifaArtista.objects.filter(
+                artista = self.artista,
+                tipo_trabajo= self.tipo_trabajo,
+                vigente_desde__lte=self.fecha
+            ).filter(
+                models.Qmodels.Q(vigente_hasta__gte=self.fecha) | models.Q(vigente_hasta__isnull=True)
+            ).first()
+
+            if tarifa_vigente:
+                self.tarifa_aplicada = tarifa_vigente
+            else:
+                raise ValidationError(
+                    f"No existe tarifa vigente para {self.get_tipo_trabajo_display()} "
+                    f"del artista {self.artista.nombre} en la fecha {self.fecha}"
+                )
+        # Calcular precio si no se especificó
+        if not self.precio_final or self.precio_final == 0:
+            self.precio_final = self.calcular_precio()
+        # Validar todo
+        self.full_clean()
+        super().save(*args, **kwargs)
